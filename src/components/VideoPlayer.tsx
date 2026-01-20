@@ -195,8 +195,7 @@ const VideoPlayer = ({
         key={currentEpisodeId || movieId}
         videoSources={videoSources}
         contentBackdrop={contentBackdrop || poster || currentEpisode?.still_path}
-        autoplay={false}
-        episodeId={currentEpisodeId}
+        currentEpisodeId={currentEpisodeId}
         movieId={movieId}
         accessType={effectiveAccessType}
         excludeFromPlan={excludeFromPlan}
@@ -205,11 +204,8 @@ const VideoPlayer = ({
         mediaId={mediaId}
         mediaType={mediaType}
         title={title}
-        onMinimize={onMinimize}
-        trailerUrl={trailerUrl}
         episodes={playerEpisodes}
         onEpisodeSelect={(episodeId: string) => onEpisodeSelect?.(episodeId)}
-        seriesThumbnail={contentBackdrop}
         contentId={contentId}
         onEnded={onEnded}
       />
