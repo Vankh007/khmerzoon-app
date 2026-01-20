@@ -310,11 +310,6 @@ export function useIPadVideoFullscreen({ containerRef, videoRef }: UseIPadVideoF
             await lockToLandscape();
           });
 
-          // Some OEM Android builds apply the orientation *after* the fullscreen transition.
-          // Do a second lock attempt to make landscape fullscreen much more reliable.
-          await new Promise(resolve => setTimeout(resolve, 120));
-          await lockToLandscape();
-
           // Hide app UI chrome (BottomNav/Header) even if the device still shows system bars.
           applyPWAFullscreenStyles(true);
 
