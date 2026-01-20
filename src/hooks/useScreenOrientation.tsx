@@ -3,6 +3,14 @@ import { Capacitor } from '@capacitor/core';
 import { ScreenOrientation, OrientationLockType } from '@capacitor/screen-orientation';
 
 /**
+ * Orientation lock state management to prevent duplicate/competing calls
+ */
+let isLocking = false;
+let pendingLockOrientation: 'landscape' | 'portrait' | null = null;
+let lastLockTime = 0;
+const LOCK_DEBOUNCE_MS = 300;
+
+/**
  * Get Android API level (returns 0 for non-Android or unknown)
  */
 const getAndroidApiLevel = (): number => {
@@ -44,139 +52,185 @@ const unlockBeforeLock = async (delayMs: number = 100): Promise<void> => {
 /**
  * Lock screen to portrait orientation (native only)
  * Enhanced for Android 14+ (API 34+) compatibility + OEM Android reliability.
+ * Includes debouncing to prevent duplicate/competing calls.
  */
 export const lockToPortrait = async (): Promise<boolean> => {
-  if (!Capacitor.isNativePlatform()) {
-    // Try Web API as fallback
-    try {
-      const orientation = screen.orientation as any;
-      if (orientation && orientation.lock) {
-        await orientation.lock('portrait');
-        console.log('[Orientation] Web API locked to portrait');
-        return true;
-      }
-    } catch (e) {
-      console.log('[Orientation] Web portrait lock not supported');
-    }
-    return false;
+  const now = Date.now();
+  
+  // Debounce: if we just locked recently, skip
+  if (now - lastLockTime < LOCK_DEBOUNCE_MS) {
+    console.log('[Orientation] Debounced portrait lock (too soon)');
+    return true;
   }
-
-  const isAndroidNative = Capacitor.getPlatform() === 'android';
-  const isModernAndroid = isAndroid14Plus();
-  console.log('[Orientation] Locking to portrait, Android:', isAndroidNative, 'Android 14+:', isModernAndroid);
-
-  // On Android (including some older OEM builds), unlock first before locking.
-  if (isAndroidNative) {
-    await unlockBeforeLock(100);
+  
+  // If already locking, queue this request
+  if (isLocking) {
+    console.log('[Orientation] Already locking, queuing portrait');
+    pendingLockOrientation = 'portrait';
+    return true;
   }
-
-  const orientationsToTry: OrientationLockType[] = isAndroidNative
-    ? ['portrait-primary', 'portrait', 'portrait-secondary']
-    : ['portrait', 'portrait-primary'];
-
-  for (const orientation of orientationsToTry) {
-    try {
-      await ScreenOrientation.lock({ orientation });
-      console.log(`[Orientation] Locked to ${orientation}`);
-
-      // Verify on Android (some devices report success but don't rotate)
-      if (isAndroidNative) {
-        await new Promise(resolve => setTimeout(resolve, 120));
-        const current = await ScreenOrientation.orientation();
-        if (current.type.includes('portrait')) {
-          console.log('[Orientation] Verified portrait orientation:', current.type);
+  
+  isLocking = true;
+  lastLockTime = now;
+  
+  try {
+    if (!Capacitor.isNativePlatform()) {
+      // Try Web API as fallback
+      try {
+        const orientation = screen.orientation as any;
+        if (orientation && orientation.lock) {
+          await orientation.lock('portrait');
+          console.log('[Orientation] Web API locked to portrait');
           return true;
         }
-        console.log('[Orientation] Portrait not applied, trying next...');
-        continue;
+      } catch (e) {
+        console.log('[Orientation] Web portrait lock not supported');
       }
+      return false;
+    }
 
-      return true;
-    } catch (error) {
-      console.log(`[Orientation] ${orientation} lock failed:`, error);
+    const isAndroidNative = Capacitor.getPlatform() === 'android';
+    const isModernAndroid = isAndroid14Plus();
+    console.log('[Orientation] Locking to portrait, Android:', isAndroidNative, 'Android 14+:', isModernAndroid);
+
+    // On Android (including some older OEM builds), unlock first before locking.
+    if (isAndroidNative) {
+      await unlockBeforeLock(80); // Reduced delay for smoother transition
+    }
+
+    const orientationsToTry: OrientationLockType[] = isAndroidNative
+      ? ['portrait-primary', 'portrait']
+      : ['portrait', 'portrait-primary'];
+
+    for (const orientation of orientationsToTry) {
+      try {
+        await ScreenOrientation.lock({ orientation });
+        console.log(`[Orientation] Locked to ${orientation}`);
+
+        // Verify on Android (some devices report success but don't rotate)
+        if (isAndroidNative) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const current = await ScreenOrientation.orientation();
+          if (current.type.includes('portrait')) {
+            console.log('[Orientation] Verified portrait orientation:', current.type);
+            return true;
+          }
+          console.log('[Orientation] Portrait not applied, trying next...');
+          continue;
+        }
+
+        return true;
+      } catch (error) {
+        console.log(`[Orientation] ${orientation} lock failed:`, error);
+      }
+    }
+
+    console.log('[Orientation] All portrait locks failed');
+    return false;
+  } finally {
+    isLocking = false;
+    
+    // Process pending request if any
+    if (pendingLockOrientation) {
+      const pending = pendingLockOrientation;
+      pendingLockOrientation = null;
+      if (pending === 'landscape') {
+        setTimeout(() => lockToLandscape(), 50);
+      }
     }
   }
-
-  console.log('[Orientation] All portrait locks failed');
-  return false;
 };
 
 /**
  * Lock screen to landscape orientation (native only)
  * Enhanced for Android 14+ (API 34+) compatibility + OEM Android reliability.
+ * Includes debouncing to prevent duplicate/competing calls.
  */
 export const lockToLandscape = async (): Promise<boolean> => {
-  if (!Capacitor.isNativePlatform()) {
-    // Try Web API as fallback
-    try {
-      const orientation = screen.orientation as any;
-      if (orientation && orientation.lock) {
-        await orientation.lock('landscape');
-        console.log('[Orientation] Web API locked to landscape');
-        return true;
-      }
-    } catch (e) {
-      console.log('[Orientation] Web landscape lock not supported');
-    }
-    return false;
+  const now = Date.now();
+  
+  // Debounce: if we just locked recently, skip
+  if (now - lastLockTime < LOCK_DEBOUNCE_MS) {
+    console.log('[Orientation] Debounced landscape lock (too soon)');
+    return true;
   }
-
-  const isAndroidNative = Capacitor.getPlatform() === 'android';
-  const isModernAndroid = isAndroid14Plus();
-  console.log('[Orientation] Locking to landscape, Android:', isAndroidNative, 'Android 14+:', isModernAndroid);
-
-  // On Android (including some older OEM builds), unlock first before locking.
-  if (isAndroidNative) {
-    await unlockBeforeLock(120);
+  
+  // If already locking, queue this request
+  if (isLocking) {
+    console.log('[Orientation] Already locking, queuing landscape');
+    pendingLockOrientation = 'landscape';
+    return true;
   }
-
-  const orientationsToTry: OrientationLockType[] = isAndroidNative
-    ? ['landscape-primary', 'landscape-secondary', 'landscape']
-    : ['landscape', 'landscape-primary', 'landscape-secondary'];
-
-  for (const orientation of orientationsToTry) {
-    try {
-      await ScreenOrientation.lock({ orientation });
-      console.log(`[Orientation] Locked to ${orientation}`);
-
-      // Verify on Android (some devices report success but don't rotate)
-      if (isAndroidNative) {
-        await new Promise(resolve => setTimeout(resolve, 150));
-        const current = await ScreenOrientation.orientation();
-        if (current.type.includes('landscape')) {
-          console.log('[Orientation] Verified landscape orientation:', current.type);
+  
+  isLocking = true;
+  lastLockTime = now;
+  
+  try {
+    if (!Capacitor.isNativePlatform()) {
+      // Try Web API as fallback
+      try {
+        const orientation = screen.orientation as any;
+        if (orientation && orientation.lock) {
+          await orientation.lock('landscape');
+          console.log('[Orientation] Web API locked to landscape');
           return true;
         }
-        console.log('[Orientation] Landscape not applied, trying next...');
-        continue;
+      } catch (e) {
+        console.log('[Orientation] Web landscape lock not supported');
       }
-
-      return true;
-    } catch (error) {
-      console.log(`[Orientation] ${orientation} lock failed:`, error);
+      return false;
     }
-  }
 
-  // Last resort on Android: Try setting to 'any' then immediately to landscape-primary
-  if (isAndroidNative) {
-    try {
-      console.log('[Orientation] Trying any->landscape-primary workaround');
-      await ScreenOrientation.lock({ orientation: 'any' });
-      await new Promise(resolve => setTimeout(resolve, 120));
-      await ScreenOrientation.lock({ orientation: 'landscape-primary' });
-      await new Promise(resolve => setTimeout(resolve, 150));
-      const current = await ScreenOrientation.orientation();
-      if (current.type.includes('landscape')) {
-        console.log('[Orientation] Workaround succeeded');
+    const isAndroidNative = Capacitor.getPlatform() === 'android';
+    const isModernAndroid = isAndroid14Plus();
+    console.log('[Orientation] Locking to landscape, Android:', isAndroidNative, 'Android 14+:', isModernAndroid);
+
+    // On Android (including some older OEM builds), unlock first before locking.
+    if (isAndroidNative) {
+      await unlockBeforeLock(80); // Reduced delay for smoother transition
+    }
+
+    const orientationsToTry: OrientationLockType[] = isAndroidNative
+      ? ['landscape-primary', 'landscape']
+      : ['landscape', 'landscape-primary'];
+
+    for (const orientation of orientationsToTry) {
+      try {
+        await ScreenOrientation.lock({ orientation });
+        console.log(`[Orientation] Locked to ${orientation}`);
+
+        // Verify on Android (some devices report success but don't rotate)
+        if (isAndroidNative) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const current = await ScreenOrientation.orientation();
+          if (current.type.includes('landscape')) {
+            console.log('[Orientation] Verified landscape orientation:', current.type);
+            return true;
+          }
+          console.log('[Orientation] Landscape not applied, trying next...');
+          continue;
+        }
+
         return true;
+      } catch (error) {
+        console.log(`[Orientation] ${orientation} lock failed:`, error);
       }
-    } catch (e) {
-      console.log('[Orientation] Workaround failed:', e);
+    }
+
+    console.log('[Orientation] All landscape locks failed');
+    return false;
+  } finally {
+    isLocking = false;
+    
+    // Process pending request if any
+    if (pendingLockOrientation) {
+      const pending = pendingLockOrientation;
+      pendingLockOrientation = null;
+      if (pending === 'portrait') {
+        setTimeout(() => lockToPortrait(), 50);
+      }
     }
   }
-
-  console.log('[Orientation] All landscape locks failed');
-  return false;
 };
 
 /**

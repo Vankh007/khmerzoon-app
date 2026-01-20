@@ -110,20 +110,18 @@ export async function enterVideoFullscreen(
   
   if (isNative) {
     // STEP 1: Lock orientation first (caller provides this)
+    // Note: The orientation lock function now has debouncing built-in
     if (onOrientationLocked) {
       await onOrientationLocked();
-      // Wait for orientation to fully settle
-      await new Promise(resolve => setTimeout(resolve, 150));
+      // Reduced wait time since debouncing handles duplicate calls
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
     
     // STEP 2: Enter FULL immersive mode (hide BOTH status bar AND nav bar)
     await enterImmersiveFullscreen();
-    
-    // STEP 3: Small delay before fullscreen request
-    await new Promise(resolve => setTimeout(resolve, 50));
   }
   
-  // STEP 4: Request fullscreen on container
+  // STEP 3: Request fullscreen on container (no extra delay needed)
   try {
     if (container.requestFullscreen) {
       // On some Android WebViews (older OEM builds like OPPO), passing navigationUI:'hide'
