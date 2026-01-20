@@ -69,6 +69,8 @@ const VideoPlayer = ({
   const [mobileVideoUrl, setMobileVideoUrl] = useState<string | null>(null);
   const [mobileSourceType, setMobileSourceType] = useState<"mp4" | "hls" | "dash">("hls");
   const [isLoadingMobileUrl, setIsLoadingMobileUrl] = useState(false);
+  // Track if we should use ShakaPlayer even on Android (for iframe/embed sources)
+  const [useShakafallback, setUseShakaFallback] = useState(false);
   
   // Track the last fetched episode/source to prevent duplicate fetches
   const lastFetchedRef = useRef<string | null>(null);
@@ -89,6 +91,7 @@ const VideoPlayer = ({
       lastFetchedRef.current = null;
       setMobileVideoUrl(null);
       setIsLoadingMobileUrl(true);
+      setUseShakaFallback(false);
       onEpisodeSelect(episode.id);
     }
   }, [onEpisodeSelect]);
@@ -100,11 +103,13 @@ const VideoPlayer = ({
       lastFetchedRef.current = null;
       setMobileVideoUrl(null);
       setIsLoadingMobileUrl(true);
+      setUseShakaFallback(false);
     }
   }, [currentEpisodeId]);
 
   // For native Android, get the video URL for mobile player
   useEffect(() => {
+    // Only process for native Android
     if (!isNative || !isAndroid) {
       return;
     }
@@ -114,13 +119,14 @@ const VideoPlayer = ({
     if (!defaultSource) {
       setMobileVideoUrl(null);
       setIsLoadingMobileUrl(false);
+      setUseShakaFallback(false);
       return;
     }
     
     const fetchKey = `${currentEpisodeId || movieId}-${defaultSource.id}`;
     
     // Skip if we already fetched for this exact combination
-    if (lastFetchedRef.current === fetchKey && mobileVideoUrl) {
+    if (lastFetchedRef.current === fetchKey && (mobileVideoUrl || useShakafallback)) {
       setIsLoadingMobileUrl(false);
       return;
     }
@@ -129,6 +135,18 @@ const VideoPlayer = ({
 
     // Determine source type
     const sourceType = (defaultSource.source_type || "").toLowerCase();
+    
+    // Check if source is iframe/embed - use ShakaPlayer for these
+    if (sourceType === "iframe" || sourceType === "embed") {
+      console.log('[VideoPlayer] Iframe/embed source detected, using ShakaPlayer fallback');
+      setMobileVideoUrl(null);
+      setUseShakaFallback(true);
+      setIsLoadingMobileUrl(false);
+      lastFetchedRef.current = fetchKey;
+      return;
+    }
+    
+    // Set source type for MobileVideoPlayer
     if (sourceType === "hls" || sourceType === "m3u8") {
       setMobileSourceType("hls");
     } else if (sourceType === "dash") {
@@ -139,56 +157,61 @@ const VideoPlayer = ({
       setMobileSourceType("hls");
     }
 
-    // Check if source is iframe/embed - fallback to ShakaPlayer for these
-    if (sourceType === "iframe" || sourceType === "embed") {
-      setMobileVideoUrl(null);
-      setIsLoadingMobileUrl(false);
-      return;
-    }
-
     // For free content, use URL directly
     if (defaultSource.url) {
       setMobileVideoUrl(defaultSource.url);
+      setUseShakaFallback(false);
       lastFetchedRef.current = fetchKey;
     } else if (defaultSource.quality_urls) {
       const firstUrl = Object.values(defaultSource.quality_urls)[0];
-      setMobileVideoUrl(firstUrl || null);
+      if (firstUrl) {
+        setMobileVideoUrl(firstUrl);
+        setUseShakaFallback(false);
+      } else {
+        setMobileVideoUrl(null);
+        setUseShakaFallback(true);
+      }
       lastFetchedRef.current = fetchKey;
     } else {
       setMobileVideoUrl(null);
+      setUseShakaFallback(true);
+      lastFetchedRef.current = fetchKey;
     }
     setIsLoadingMobileUrl(false);
-  }, [isNative, isAndroid, videoSources, currentEpisodeId, movieId, mobileVideoUrl]);
+  }, [isNative, isAndroid, videoSources, currentEpisodeId, movieId, mobileVideoUrl, useShakafallback]);
 
-  // Use mobile player for native Android apps when we have a direct video URL
-  if (isNative && isAndroid && mobileVideoUrl) {
-    return (
-      <MobileVideoPlayer
-        key={`mobile-${currentEpisodeId || movieId}-${mobileVideoUrl.substring(0, 50)}`}
-        videoUrl={mobileVideoUrl}
-        poster={contentBackdrop || poster || currentEpisode?.still_path || currentEpisode?.thumbnail_url}
-        autoplay={false}
-        onBack={onMinimize}
-        title={title}
-        sourceType={mobileSourceType}
-        episodes={playerEpisodes}
-        currentEpisodeId={currentEpisodeId}
-        onEpisodeSelect={handleEpisodeSelect}
-        seriesBackdrop={contentBackdrop}
-      />
-    );
+  // NATIVE ANDROID: Use MobileVideoPlayer for direct video URLs
+  if (isNative && isAndroid && !useShakafallback) {
+    // Show loading state while determining video URL
+    if (isLoadingMobileUrl) {
+      return (
+        <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+          <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+        </div>
+      );
+    }
+    
+    // Use MobileVideoPlayer when we have a direct video URL
+    if (mobileVideoUrl) {
+      return (
+        <MobileVideoPlayer
+          key={`mobile-${currentEpisodeId || movieId}-${mobileVideoUrl.substring(0, 50)}`}
+          videoUrl={mobileVideoUrl}
+          poster={contentBackdrop || poster || currentEpisode?.still_path || currentEpisode?.thumbnail_url}
+          autoplay={false}
+          onBack={onMinimize}
+          title={title}
+          sourceType={mobileSourceType}
+          episodes={playerEpisodes}
+          currentEpisodeId={currentEpisodeId}
+          onEpisodeSelect={handleEpisodeSelect}
+          seriesBackdrop={contentBackdrop}
+        />
+      );
+    }
   }
   
-  // Loading state for Android native
-  if (isNative && isAndroid && isLoadingMobileUrl) {
-    return (
-      <div className="relative w-full aspect-video bg-black flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
-      </div>
-    );
-  }
-  
-  // Use ShakaPlayer for web, iOS, and fallback cases (including iframe/embed sources)
+  // WEB, iOS, and ANDROID FALLBACK (iframe/embed sources): Use ShakaPlayer
   return (
     <div className="relative w-full aspect-video overflow-hidden">
       <ShakaPlayer 
